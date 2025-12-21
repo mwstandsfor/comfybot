@@ -5,6 +5,6 @@ services:
     restart: unless-stopped
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - COMFYUI_HOST=host.docker.internal:8188
+      - COMFYUI_HOST=${COMFYUI_HOST:-host.docker.internal:8188}
     volumes:
       - ./zimage.json:/app/zimage.json:ro

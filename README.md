@@ -61,7 +61,7 @@ You need to export the workflow for the bot.
 
 -----
 
-## Part 3: Set Up the Telegram Bot
+## Part 2: Set Up the Telegram Bot
 
 ### 1. Create a bot on Telegram
 
@@ -74,56 +74,41 @@ You need to export the workflow for the bot.
 
 1. Download Docker Desktop: https://www.docker.com/products/docker-desktop/
 2. Install and open it
-3. Make sure it’s running (whale icon in menu bar)
+3. Make sure it's running (whale icon in menu bar)
 
-### 3. Set up the bot code
-
-```bash
-mkdir -p ~/comfybot
-cd ~/comfybot
-```
-
-Copy these files 
-
-- `comfy-botfater.py`
-- `zimage.json`
-- `Dockerfile`
-- `docker-compose.yml`
-- `requirements.txt`
-
-### 4. Edit docker-compose.yml with your token
+### 3. Clone the bot repo
 
 ```bash
-nano docker-compose.yml
+cd ~
+git clone https://github.com/mwstandsfor/comfybot.git
+cd comfybot
 ```
 
-Replace the `TELEGRAM_TOKEN` with your bot token from BotFather:
+### 4. Add your exported workflow
 
-```yaml
-services:
-  comfybot:
-    build: .
-    container_name: comfybot
-    restart: unless-stopped
-    environment:
-      - TELEGRAM_TOKEN=YOUR_TOKEN_HERE
-      - COMFYUI_HOST=host.docker.internal:8188
-    volumes:
-      - ./zimage.json:/app/zimage.json:ro
+Copy the `zimage.json` you exported earlier into the `comfybot` folder, replacing the existing one.
+
+### 5. Create your `.env` file
+
+```bash
+echo "TELEGRAM_TOKEN=your_token_here" > .env
 ```
+
+Replace `your_token_here` with the actual token from BotFather.
 
 > [!important]
-> If your ComfyUI runs on a different port, change `8188` to match.
+> If your ComfyUI port is different from 8188, also add:
+> ```bash
+> echo "COMFYUI_HOST=host.docker.internal:YOUR_PORT" >> .env
+> ```
 
-Save and exit (Ctrl+X, then Y, then Enter).
-
-### 5. Build and run
+### 6. Build and run
 
 ```bash
 docker compose up -d
 ```
 
-Check it’s running:
+Check it's running:
 
 ```bash
 docker compose logs -f
@@ -138,34 +123,22 @@ You should see:
 
 -----
 
-## Part 4: Using the Bot
+## Part 3: Using the Bot
 
-1. **Start ComfyUI first** (it must be running!)
-   
-   ```bash
-   cd ~/ComfyUI
-   source venv/bin/activate
-   python main.py
-   ```
+1. **Start ComfyUI first** - open the ComfyUI desktop app (it must be running!)
+
 2. **Open Telegram** and find your bot (search for the name you gave it)
+
 3. **Send `/start`** to see instructions
+
 4. **Send any text prompt** to generate an image
-- Example: `A cat wearing a top hat, digital art`
-1. **Send `/settings`** to change aspect ratio
+   - Example: `A cat wearing a top hat, digital art`
+
+5. **Send `/settings`** to change aspect ratio
 
 -----
 
 ## Useful Commands
-
-### ComfyUI
-
-```bash
-# Start ComfyUI
-cd ~/ComfyUI && source venv/bin/activate && python main.py
-
-# Start on a different port
-python main.py --port 7860
-```
 
 ### Docker Bot
 
@@ -187,45 +160,27 @@ docker compose up -d --build
 
 ## Troubleshooting
 
-> [!warning] “Connection refused” error
+> [!warning] "Connection refused" error
 > 
-> - Make sure ComfyUI is running
-> - Check the port matches in `docker-compose.yml`
+> - Make sure ComfyUI desktop app is running
+> - Check the port in your `.env` matches your ComfyUI port (find it in ComfyUI Settings > Server-config)
 
 > [!warning] Bot not responding
 > 
 > - Check logs: `docker compose logs -f`
-> - Make sure your Telegram token is correct
+> - Make sure your `.env` file exists and has the correct token
 
 > [!warning] Images not generating
 > 
-> - Open ComfyUI in browser (http://127.0.0.1:8188)
+> - Open ComfyUI and try running the workflow manually
 > - Check if models are loaded correctly
-> - Look for errors in the ComfyUI terminal
+> - Look for errors in the ComfyUI interface
 
 > [!warning] Wrong model files
 > If you get errors about missing models, double-check:
 > 
-> 1. File names match exactly what’s in `zimage.json`
-> 2. Files are in the correct folders under `~/ComfyUI/models/`
-
------
-
-## Optional: Run ComfyUI on Startup
-
-Create a launch script:
-
-```bash
-cat > ~/start-comfyui.sh << 'EOF'
-#!/bin/bash
-cd ~/ComfyUI
-source venv/bin/activate
-python main.py
-EOF
-chmod +x ~/start-comfyui.sh
-```
-
-Then just run `~/start-comfyui.sh` to start ComfyUI.
+> 1. The models downloaded correctly via the template
+> 2. File names in your exported `zimage.json` match what's installed
 
 -----
 
@@ -235,12 +190,10 @@ If you want to use the bot when away from home:
 
 1. Install Tailscale: https://tailscale.com/download
 2. Set up on your Mac
-3. Update `docker-compose.yml`:
-   
-   ```yaml
+3. Add to your `.env`:
+   ```
    COMFYUI_HOST=your-mac-name.tailnet-name:8188
    ```
 4. Rebuild: `docker compose up -d --build`
 
 Now your bot works from anywhere!
-
