@@ -23,7 +23,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 # === CONFIG ===
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "127.0.0.1:8188")
+COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "127.0.0.1:7860")
 
 # Load workflow from zimage.json in the same directory as this script
 SCRIPT_DIR = Path(__file__).parent
