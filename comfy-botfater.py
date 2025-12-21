@@ -22,8 +22,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # === CONFIG ===
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "your_token_here")
-COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "127.0.0.1:7860")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "127.0.0.1:8188")
 
 # Load workflow from zimage.json in the same directory as this script
 SCRIPT_DIR = Path(__file__).parent

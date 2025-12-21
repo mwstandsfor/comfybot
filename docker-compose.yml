@@ -4,7 +4,7 @@ services:
     container_name: comfybot
     restart: unless-stopped
     environment:
-      - TELEGRAM_TOKEN=8408589933:AAGcfOlpwJ3y5kX11GDEpopuIiCEx_XNRKQ
-      - COMFYUI_HOST=host.docker.internal:7860
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - COMFYUI_HOST=host.docker.internal:8188
     volumes:
       - ./zimage.json:/app/zimage.json:ro
