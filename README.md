@@ -182,18 +182,3 @@ docker compose up -d --build
 > 1. The models downloaded correctly via the template
 > 2. File names in your exported `zimage.json` match what's installed
 
------
-
-## Optional: Access from Anywhere (Tailscale)
-
-If you want to use the bot when away from home:
-
-1. Install Tailscale: https://tailscale.com/download
-2. Set up on your Mac
-3. Add to your `.env`:
-   ```
-   COMFYUI_HOST=your-mac-name.tailnet-name:8188
-   ```
-4. Rebuild: `docker compose up -d --build`
-
-Now your bot works from anywhere!
