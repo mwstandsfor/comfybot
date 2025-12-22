@@ -59,6 +59,7 @@ def get_user_settings(user_id: int) -> dict:
             "width": 1024,
             "height": 1024,
             "last_prompt": None,
+            "last_seed": None,
             "current_prompt_id": None,
         }
     return user_settings[user_id]
@@ -73,11 +74,13 @@ def load_workflow() -> dict:
         return json.load(f)
 
 
-def queue_prompt(prompt: dict) -> str:
-    """Queue a prompt and return the prompt_id."""
-    # Randomize seed
+def queue_prompt(prompt: dict, seed: int | None = None) -> tuple[str, int]:
+    """Queue a prompt and return (prompt_id, seed)."""
+    # Use provided seed or randomize
     if SEED_NODE_ID in prompt:
-        prompt[SEED_NODE_ID]["inputs"]["seed"] = random.randint(0, 2**53)
+        if seed is None:
+            seed = random.randint(0, 2**53)
+        prompt[SEED_NODE_ID]["inputs"]["seed"] = seed
 
     data = json.dumps({"prompt": prompt}).encode("utf-8")
     req = urllib.request.Request(
@@ -85,11 +88,11 @@ def queue_prompt(prompt: dict) -> str:
         data=data,
         headers={"Content-Type": "application/json"},
     )
-    log.info(f"Queueing prompt to {COMFYUI_HOST}...")
+    log.info(f"Queueing prompt to {COMFYUI_HOST}... (seed: {seed})")
     with urllib.request.urlopen(req) as resp:
         result = json.loads(resp.read())
         log.info(f"Queued! prompt_id: {result['prompt_id']}")
-        return result["prompt_id"]
+        return result["prompt_id"], seed
 
 
 def cancel_prompt(prompt_id: str) -> bool:
@@ -162,8 +165,8 @@ async def wait_for_image(prompt_id: str) -> bytes | None:
     return None
 
 
-async def generate_image(prompt_text: str, user_id: int) -> bytes | None:
-    """Generate an image from a text prompt."""
+async def generate_image(prompt_text: str, user_id: int, seed: int | None = None) -> tuple[bytes | None, int | None]:
+    """Generate an image from a text prompt. Returns (image_data, seed)."""
     settings = get_user_settings(user_id)
 
     workflow = load_workflow()
@@ -171,13 +174,14 @@ async def generate_image(prompt_text: str, user_id: int) -> bytes | None:
     workflow[SIZE_NODE_ID]["inputs"]["width"] = settings["width"]
     workflow[SIZE_NODE_ID]["inputs"]["height"] = settings["height"]
 
-    prompt_id = queue_prompt(workflow)
+    prompt_id, used_seed = queue_prompt(workflow, seed)
 
     # Store the current prompt_id so user can cancel it
     settings["current_prompt_id"] = prompt_id
 
     try:
-        return await wait_for_image(prompt_id)
+        image_data = await wait_for_image(prompt_id)
+        return image_data, used_seed
     finally:
         # Clear the prompt_id when done (whether successful or not)
         settings["current_prompt_id"] = None
@@ -191,6 +195,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Commands:\n"
         "/settings - Change aspect ratio\n"
         "/r - Retry last prompt with new seed\n"
+        "/scale - Rerun last prompt with same seed at 2x resolution\n"
         "/cancel - Cancel current generation\n\n"
         "Example: A cat wearing a top hat, digital art"
     )
@@ -239,9 +244,12 @@ async def retry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     try:
-        image_data = await generate_image(last_prompt, user_id)
+        image_data, seed = await generate_image(last_prompt, user_id)
 
         if image_data:
+            # Store the new seed
+            settings["last_seed"] = seed
+
             await update.message.reply_photo(
                 photo=image_data,
                 caption=f"✨ {last_prompt[:200]}"
@@ -269,6 +277,53 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         settings["current_prompt_id"] = None
     else:
         await update.message.reply_text("❌ Failed to cancel generation. It may have already completed.")
+
+
+async def scale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /scale command - rerun last prompt with same seed at 2x resolution."""
+    user_id = update.effective_user.id
+    settings = get_user_settings(user_id)
+
+    last_prompt = settings.get("last_prompt")
+    last_seed = settings.get("last_seed")
+
+    if not last_prompt or last_seed is None:
+        await update.message.reply_text("❌ No previous generation to scale. Send a prompt first!")
+        return
+
+    # Store original dimensions
+    original_width = settings["width"]
+    original_height = settings["height"]
+
+    # Temporarily set to 2x resolution
+    settings["width"] = original_width * 2
+    settings["height"] = original_height * 2
+
+    status_msg = await update.message.reply_text(
+        f"🔍 Scaling to 2x resolution ({settings['width']}×{settings['height']})...\n"
+        f"Prompt: {last_prompt[:100]}{'...' if len(last_prompt) > 100 else ''}"
+    )
+
+    try:
+        # Generate with the same seed
+        image_data, _ = await generate_image(last_prompt, user_id, seed=last_seed)
+
+        if image_data:
+            await update.message.reply_photo(
+                photo=image_data,
+                caption=f"✨ 2x scaled: {last_prompt[:200]}"
+            )
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ Failed to get image from ComfyUI")
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
+
+    finally:
+        # Always restore original dimensions
+        settings["width"] = original_width
+        settings["height"] = original_height
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -309,11 +364,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     try:
-        image_data = await generate_image(prompt_text, user_id)
+        image_data, seed = await generate_image(prompt_text, user_id)
 
         if image_data:
-            # Store the prompt for /r command
+            # Store the prompt and seed for /r and /scale commands
             settings["last_prompt"] = prompt_text
+            settings["last_seed"] = seed
 
             await update.message.reply_photo(
                 photo=image_data,
@@ -348,6 +404,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("settings", settings))
     app.add_handler(CommandHandler("r", retry))
+    app.add_handler(CommandHandler("scale", scale))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
