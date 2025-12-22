@@ -34,6 +34,7 @@ PROMPT_NODE_ID = "45"
 SEED_NODE_ID = "63"  # Seed Generator node
 OUTPUT_NODE_ID = "9"
 SIZE_NODE_ID = "41"  # EmptySD3LatentImage node
+KSAMPLER_NODE_ID = "44"  # KSampler node
 
 # Aspect ratio presets (name: (width, height))
 ASPECT_RATIOS = {
@@ -47,6 +48,9 @@ ASPECT_RATIOS = {
     "2:1": (1408, 704),
 }
 
+# K-Sampler steps options
+STEPS_OPTIONS = [4, 8, 12]
+
 # Per-user settings (in-memory, resets on restart)
 user_settings: dict[int, dict] = {}
 
@@ -58,6 +62,7 @@ def get_user_settings(user_id: int) -> dict:
             "aspect_ratio": "1:1",
             "width": 1024,
             "height": 1024,
+            "steps": 4,
             "last_prompt": None,
             "last_seed": None,
             "current_prompt_id": None,
@@ -173,6 +178,7 @@ async def generate_image(prompt_text: str, user_id: int, seed: int | None = None
     workflow[PROMPT_NODE_ID]["inputs"]["text"] = prompt_text
     workflow[SIZE_NODE_ID]["inputs"]["width"] = settings["width"]
     workflow[SIZE_NODE_ID]["inputs"]["height"] = settings["height"]
+    workflow[KSAMPLER_NODE_ID]["inputs"]["steps"] = settings["steps"]
 
     prompt_id, used_seed = queue_prompt(workflow, seed)
 
@@ -202,7 +208,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /settings command - show aspect ratio buttons."""
+    """Handle /settings command - show aspect ratio and steps buttons."""
     user_id = update.effective_user.id
     current = get_user_settings(user_id)
 
@@ -219,11 +225,22 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if row:
         buttons.append(row)
 
+    # Add separator
+    buttons.append([InlineKeyboardButton("─── Steps ───", callback_data="noop")])
+
+    # Add steps options
+    steps_row = []
+    for steps in STEPS_OPTIONS:
+        label = f"✓ {steps}" if steps == current["steps"] else str(steps)
+        steps_row.append(InlineKeyboardButton(label, callback_data=f"steps:{steps}"))
+    buttons.append(steps_row)
+
     keyboard = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(
-        f"📐 Current: {current['aspect_ratio']} ({current['width']}×{current['height']})\n\n"
-        "Select aspect ratio:",
+        f"📐 Aspect Ratio: {current['aspect_ratio']} ({current['width']}×{current['height']})\n"
+        f"🎯 Steps: {current['steps']}\n\n"
+        "Select settings:",
         reply_markup=keyboard
     )
 
@@ -330,22 +347,34 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Handle button presses."""
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
     user_id = update.effective_user.id
-    
-    if data.startswith("ar:"):
+    settings = get_user_settings(user_id)
+
+    if data == "noop":
+        # Separator button, do nothing
+        return
+
+    elif data.startswith("ar:"):
         # Aspect ratio selection
         ratio_name = data[3:]
         if ratio_name in ASPECT_RATIOS:
             width, height = ASPECT_RATIOS[ratio_name]
-            user_settings[user_id] = {
-                "aspect_ratio": ratio_name,
-                "width": width,
-                "height": height,
-            }
+            settings["aspect_ratio"] = ratio_name
+            settings["width"] = width
+            settings["height"] = height
             await query.edit_message_text(
                 f"✅ Aspect ratio set to {ratio_name} ({width}×{height})"
+            )
+
+    elif data.startswith("steps:"):
+        # Steps selection
+        steps = int(data[6:])
+        if steps in STEPS_OPTIONS:
+            settings["steps"] = steps
+            await query.edit_message_text(
+                f"✅ Steps set to {steps}"
             )
 
 
