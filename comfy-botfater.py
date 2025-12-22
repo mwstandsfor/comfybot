@@ -44,6 +44,7 @@ ASPECT_RATIOS = {
     "3:4": (896, 1152),
     "3:2": (1216, 832),
     "2:3": (832, 1216),
+    "2:1": (1408, 704),
 }
 
 # Per-user settings (in-memory, resets on restart)
@@ -57,6 +58,8 @@ def get_user_settings(user_id: int) -> dict:
             "aspect_ratio": "1:1",
             "width": 1024,
             "height": 1024,
+            "last_prompt": None,
+            "current_prompt_id": None,
         }
     return user_settings[user_id]
 
@@ -75,7 +78,7 @@ def queue_prompt(prompt: dict) -> str:
     # Randomize seed
     if SEED_NODE_ID in prompt:
         prompt[SEED_NODE_ID]["inputs"]["seed"] = random.randint(0, 2**53)
-    
+
     data = json.dumps({"prompt": prompt}).encode("utf-8")
     req = urllib.request.Request(
         f"http://{COMFYUI_HOST}/prompt",
@@ -87,6 +90,24 @@ def queue_prompt(prompt: dict) -> str:
         result = json.loads(resp.read())
         log.info(f"Queued! prompt_id: {result['prompt_id']}")
         return result["prompt_id"]
+
+
+def cancel_prompt(prompt_id: str) -> bool:
+    """Cancel a queued prompt by prompt_id. Returns True if successful."""
+    try:
+        data = json.dumps({"delete": [prompt_id]}).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://{COMFYUI_HOST}/queue",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        log.info(f"Canceling prompt_id: {prompt_id}")
+        with urllib.request.urlopen(req) as resp:
+            log.info(f"Canceled prompt_id: {prompt_id}")
+            return True
+    except Exception as e:
+        log.error(f"Failed to cancel prompt: {e}")
+        return False
 
 
 async def wait_for_image(prompt_id: str) -> bytes | None:
@@ -144,14 +165,22 @@ async def wait_for_image(prompt_id: str) -> bytes | None:
 async def generate_image(prompt_text: str, user_id: int) -> bytes | None:
     """Generate an image from a text prompt."""
     settings = get_user_settings(user_id)
-    
+
     workflow = load_workflow()
     workflow[PROMPT_NODE_ID]["inputs"]["text"] = prompt_text
     workflow[SIZE_NODE_ID]["inputs"]["width"] = settings["width"]
     workflow[SIZE_NODE_ID]["inputs"]["height"] = settings["height"]
-    
+
     prompt_id = queue_prompt(workflow)
-    return await wait_for_image(prompt_id)
+
+    # Store the current prompt_id so user can cancel it
+    settings["current_prompt_id"] = prompt_id
+
+    try:
+        return await wait_for_image(prompt_id)
+    finally:
+        # Clear the prompt_id when done (whether successful or not)
+        settings["current_prompt_id"] = None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -160,7 +189,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🎨 Z-Image Bot\n\n"
         "Send me a text prompt and I'll generate an image!\n\n"
         "Commands:\n"
-        "/settings - Change aspect ratio\n\n"
+        "/settings - Change aspect ratio\n"
+        "/r - Retry last prompt with new seed\n"
+        "/cancel - Cancel current generation\n\n"
         "Example: A cat wearing a top hat, digital art"
     )
 
@@ -169,7 +200,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /settings command - show aspect ratio buttons."""
     user_id = update.effective_user.id
     current = get_user_settings(user_id)
-    
+
     # Build keyboard with aspect ratio options
     buttons = []
     row = []
@@ -182,14 +213,62 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             row = []
     if row:
         buttons.append(row)
-    
+
     keyboard = InlineKeyboardMarkup(buttons)
-    
+
     await update.message.reply_text(
         f"📐 Current: {current['aspect_ratio']} ({current['width']}×{current['height']})\n\n"
         "Select aspect ratio:",
         reply_markup=keyboard
     )
+
+
+async def retry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /r command - retry the last prompt with a new seed."""
+    user_id = update.effective_user.id
+    settings = get_user_settings(user_id)
+
+    last_prompt = settings.get("last_prompt")
+    if not last_prompt:
+        await update.message.reply_text("❌ No previous prompt to retry. Send a prompt first!")
+        return
+
+    status_msg = await update.message.reply_text(
+        f"🔄 Retrying with new seed ({settings['aspect_ratio']})...\n"
+        f"Prompt: {last_prompt[:100]}{'...' if len(last_prompt) > 100 else ''}"
+    )
+
+    try:
+        image_data = await generate_image(last_prompt, user_id)
+
+        if image_data:
+            await update.message.reply_photo(
+                photo=image_data,
+                caption=f"✨ {last_prompt[:200]}"
+            )
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text("❌ Failed to get image from ComfyUI")
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /cancel command - cancel the current generation."""
+    user_id = update.effective_user.id
+    settings = get_user_settings(user_id)
+
+    prompt_id = settings.get("current_prompt_id")
+    if not prompt_id:
+        await update.message.reply_text("❌ No active generation to cancel.")
+        return
+
+    if cancel_prompt(prompt_id):
+        await update.message.reply_text("✅ Generation canceled!")
+        settings["current_prompt_id"] = None
+    else:
+        await update.message.reply_text("❌ Failed to cancel generation. It may have already completed.")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -219,20 +298,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Handle text messages - generate images."""
     prompt_text = update.message.text.strip()
     user_id = update.effective_user.id
-    
+
     if not prompt_text:
         await update.message.reply_text("Please send a text prompt.")
         return
-    
+
     settings = get_user_settings(user_id)
     status_msg = await update.message.reply_text(
         f"🎨 Generating ({settings['aspect_ratio']})..."
     )
-    
+
     try:
         image_data = await generate_image(prompt_text, user_id)
-        
+
         if image_data:
+            # Store the prompt for /r command
+            settings["last_prompt"] = prompt_text
+
             await update.message.reply_photo(
                 photo=image_data,
                 caption=f"✨ {prompt_text[:200]}"
@@ -240,7 +322,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await status_msg.delete()
         else:
             await status_msg.edit_text("❌ Failed to get image from ComfyUI")
-    
+
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {str(e)}")
 
@@ -265,9 +347,11 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("settings", settings))
+    app.add_handler(CommandHandler("r", retry))
+    app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
+
     app.run_polling()
 
 
