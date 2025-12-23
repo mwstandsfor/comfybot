@@ -308,15 +308,11 @@ async def scale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ No previous generation to scale. Send a prompt first!")
         return
 
-    # Build keyboard with scale and steps options
+    # Step 1: Show scale factor options
     buttons = [
         [
-            InlineKeyboardButton("1.5x @ 8 steps", callback_data="scale:1.5:8"),
-            InlineKeyboardButton("1.5x @ 12 steps", callback_data="scale:1.5:12"),
-        ],
-        [
-            InlineKeyboardButton("2x @ 8 steps", callback_data="scale:2:8"),
-            InlineKeyboardButton("2x @ 12 steps", callback_data="scale:2:12"),
+            InlineKeyboardButton("1.5x", callback_data="scale_size:1.5"),
+            InlineKeyboardButton("2x", callback_data="scale_size:2"),
         ],
     ]
     keyboard = InlineKeyboardMarkup(buttons)
@@ -326,7 +322,7 @@ async def scale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🔍 Scale up with higher quality\n\n"
         f"Current: {current['aspect_ratio']} ({current['width']}×{current['height']}) @ {current['steps']} steps\n"
         f"Prompt: {last_prompt[:100]}{'...' if len(last_prompt) > 100 else ''}\n\n"
-        "Select scale and steps:",
+        "Select scale factor:",
         reply_markup=keyboard
     )
 
@@ -365,8 +361,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"✅ Steps set to {steps}"
             )
 
-    elif data.startswith("scale:"):
-        # Scale command - format: scale:1.5:8 or scale:2:12
+    elif data.startswith("scale_size:"):
+        # Step 1: Scale factor selected, now show steps options
+        scale_factor = data.split(":")[1]
+
+        # Build keyboard with steps options
+        buttons = [
+            [
+                InlineKeyboardButton("8 steps", callback_data=f"scale_exec:{scale_factor}:8"),
+                InlineKeyboardButton("12 steps", callback_data=f"scale_exec:{scale_factor}:12"),
+            ],
+        ]
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        await query.edit_message_text(
+            f"🔍 Scale: {scale_factor}x\n\n"
+            "Select quality (steps):",
+            reply_markup=keyboard
+        )
+
+    elif data.startswith("scale_exec:"):
+        # Step 2: Execute scaling with selected size and steps
         parts = data.split(":")
         if len(parts) == 3:
             scale_factor = float(parts[1])
