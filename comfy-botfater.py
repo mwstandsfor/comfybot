@@ -199,9 +199,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🎨 Z-Image Bot\n\n"
         "Send me a text prompt and I'll generate an image!\n\n"
         "Commands:\n"
-        "/settings - Change aspect ratio\n"
+        "/settings - Change aspect ratio and steps\n"
         "/r - Retry last prompt with new seed\n"
-        "/scale - Rerun last prompt with same seed at 2x resolution\n"
+        "/scale - Upscale last prompt (same seed, higher resolution & quality)\n"
         "/cancel - Cancel current generation\n\n"
         "Example: A cat wearing a top hat, digital art"
     )
@@ -297,7 +297,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def scale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /scale command - rerun last prompt with same seed at 2x resolution."""
+    """Handle /scale command - show menu to upscale with different options."""
     user_id = update.effective_user.id
     settings = get_user_settings(user_id)
 
@@ -308,39 +308,27 @@ async def scale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ No previous generation to scale. Send a prompt first!")
         return
 
-    # Store original dimensions
-    original_width = settings["width"]
-    original_height = settings["height"]
+    # Build keyboard with scale and steps options
+    buttons = [
+        [
+            InlineKeyboardButton("1.5x @ 8 steps", callback_data="scale:1.5:8"),
+            InlineKeyboardButton("1.5x @ 12 steps", callback_data="scale:1.5:12"),
+        ],
+        [
+            InlineKeyboardButton("2x @ 8 steps", callback_data="scale:2:8"),
+            InlineKeyboardButton("2x @ 12 steps", callback_data="scale:2:12"),
+        ],
+    ]
+    keyboard = InlineKeyboardMarkup(buttons)
 
-    # Temporarily set to 2x resolution
-    settings["width"] = original_width * 2
-    settings["height"] = original_height * 2
-
-    status_msg = await update.message.reply_text(
-        f"🔍 Scaling to 2x resolution ({settings['width']}×{settings['height']})...\n"
-        f"Prompt: {last_prompt[:100]}{'...' if len(last_prompt) > 100 else ''}"
+    current = settings
+    await update.message.reply_text(
+        f"🔍 Scale up with higher quality\n\n"
+        f"Current: {current['aspect_ratio']} ({current['width']}×{current['height']}) @ {current['steps']} steps\n"
+        f"Prompt: {last_prompt[:100]}{'...' if len(last_prompt) > 100 else ''}\n\n"
+        "Select scale and steps:",
+        reply_markup=keyboard
     )
-
-    try:
-        # Generate with the same seed
-        image_data, _ = await generate_image(last_prompt, user_id, seed=last_seed)
-
-        if image_data:
-            await update.message.reply_photo(
-                photo=image_data,
-                caption=f"✨ 2x scaled: {last_prompt[:200]}"
-            )
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text("❌ Failed to get image from ComfyUI")
-
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Error: {str(e)}")
-
-    finally:
-        # Always restore original dimensions
-        settings["width"] = original_width
-        settings["height"] = original_height
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -376,6 +364,56 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(
                 f"✅ Steps set to {steps}"
             )
+
+    elif data.startswith("scale:"):
+        # Scale command - format: scale:1.5:8 or scale:2:12
+        parts = data.split(":")
+        if len(parts) == 3:
+            scale_factor = float(parts[1])
+            steps = int(parts[2])
+
+            last_prompt = settings.get("last_prompt")
+            last_seed = settings.get("last_seed")
+
+            if not last_prompt or last_seed is None:
+                await query.edit_message_text("❌ No previous generation to scale.")
+                return
+
+            # Store original settings
+            original_width = settings["width"]
+            original_height = settings["height"]
+            original_steps = settings["steps"]
+
+            # Temporarily set scaled resolution and steps
+            settings["width"] = int(original_width * scale_factor)
+            settings["height"] = int(original_height * scale_factor)
+            settings["steps"] = steps
+
+            await query.edit_message_text(
+                f"🔍 Scaling to {scale_factor}x resolution ({settings['width']}×{settings['height']}) @ {steps} steps...\n"
+                f"Prompt: {last_prompt[:80]}{'...' if len(last_prompt) > 80 else ''}"
+            )
+
+            try:
+                # Generate with the same seed
+                image_data, _ = await generate_image(last_prompt, user_id, seed=last_seed)
+
+                if image_data:
+                    await query.message.reply_photo(
+                        photo=image_data,
+                        caption=f"✨ {scale_factor}x @ {steps} steps: {last_prompt[:150]}"
+                    )
+                else:
+                    await query.message.reply_text("❌ Failed to get image from ComfyUI")
+
+            except Exception as e:
+                await query.message.reply_text(f"❌ Error: {str(e)}")
+
+            finally:
+                # Always restore original settings
+                settings["width"] = original_width
+                settings["height"] = original_height
+                settings["steps"] = original_steps
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
